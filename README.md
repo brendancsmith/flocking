@@ -2,6 +2,8 @@
 
 A flocking birds simulation using classic [boids](https://en.wikipedia.org/wiki/Boids) rules.
 
+![Demo](demo.gif)
+
 ## Setup
 
 ```bash
@@ -14,7 +16,16 @@ uv sync
 flocking
 ```
 
-Press **Escape** or close the window to quit.
+| Control | Action |
+|---------|--------|
+| Left-click | Attract boids toward cursor |
+| Right-click | Repel boids from cursor |
+| Space / Middle-click | Spawn new boids at cursor |
+| Up / Down arrows | Adjust speed |
+| + / - | Adjust perception radius |
+| P | Pause / resume |
+| R | Reset flock |
+| Escape | Quit |
 
 ## How It Works
 

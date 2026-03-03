@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import math
 import random
 
 import pygame
 
-from flocking.birds import Boid, FlockSettings
+from flocking.birds import Boid, FlockSettings, MouseState
 
 WIDTH = 1024
 HEIGHT = 768
@@ -15,15 +16,53 @@ FPS = 60
 BG_COLOR = (15, 15, 25)
 HUD_COLOR = (180, 180, 180)
 SPAWN_BURST = 10
+SPAWN_SCATTER = 20.0
+
+# Keyboard adjustment constants
+SPEED_STEP = 0.5
+SPEED_MIN = 1.0
+SPEED_MAX = 12.0
+PERCEPTION_STEP = 10.0
+PERCEPTION_MIN = 20.0
+PERCEPTION_MAX = 200.0
+
+# Boid rendering
+BOID_SIZE = 6
+BOID_COLOR = (220, 220, 220)
+WING_ANGLE = 2.5  # radians (~143 degrees)
 
 
-def make_flock(n: int) -> list[Boid]:
-    return [Boid(x=random.uniform(0, WIDTH), y=random.uniform(0, HEIGHT)) for _ in range(n)]
+def make_flock(n: int, width: int, height: int) -> list[Boid]:
+    return [Boid(x=random.uniform(0, width), y=random.uniform(0, height)) for _ in range(n)]
 
 
 def spawn_at(flock: list[Boid], x: float, y: float, count: int = SPAWN_BURST) -> None:
     for _ in range(count):
-        flock.append(Boid(x=x + random.uniform(-20, 20), y=y + random.uniform(-20, 20)))
+        flock.append(
+            Boid(
+                x=x + random.uniform(-SPAWN_SCATTER, SPAWN_SCATTER),
+                y=y + random.uniform(-SPAWN_SCATTER, SPAWN_SCATTER),
+            )
+        )
+
+
+def draw_boid(surface: pygame.Surface, boid: Boid) -> None:
+    angle = math.atan2(boid.vy, boid.vx)
+    points = [
+        (
+            boid.x + math.cos(angle) * BOID_SIZE * 2,
+            boid.y + math.sin(angle) * BOID_SIZE * 2,
+        ),
+        (
+            boid.x + math.cos(angle + WING_ANGLE) * BOID_SIZE,
+            boid.y + math.sin(angle + WING_ANGLE) * BOID_SIZE,
+        ),
+        (
+            boid.x + math.cos(angle - WING_ANGLE) * BOID_SIZE,
+            boid.y + math.sin(angle - WING_ANGLE) * BOID_SIZE,
+        ),
+    ]
+    pygame.draw.polygon(surface, BOID_COLOR, points)
 
 
 def draw_hud(
@@ -49,6 +88,33 @@ def draw_hud(
         y += img.get_height() + 2
 
 
+def handle_keydown(
+    key: int, flock: list[Boid], settings: FlockSettings
+) -> tuple[list[Boid], bool | None]:
+    """Handle a keydown event. Returns (flock, paused_toggle) where paused_toggle is
+    True/False to toggle, or None for no change."""
+    if key == pygame.K_p:
+        return flock, True
+    if key == pygame.K_r:
+        return make_flock(NUM_BOIDS, WIDTH, HEIGHT), None
+    if key == pygame.K_SPACE:
+        mx, my = pygame.mouse.get_pos()
+        spawn_at(flock, mx, my)
+    elif key == pygame.K_UP:
+        settings.max_speed = min(settings.max_speed + SPEED_STEP, SPEED_MAX)
+    elif key == pygame.K_DOWN:
+        settings.max_speed = max(settings.max_speed - SPEED_STEP, SPEED_MIN)
+    elif key in (pygame.K_PLUS, pygame.K_EQUALS):
+        settings.perception_radius = min(
+            settings.perception_radius + PERCEPTION_STEP, PERCEPTION_MAX
+        )
+    elif key == pygame.K_MINUS:
+        settings.perception_radius = max(
+            settings.perception_radius - PERCEPTION_STEP, PERCEPTION_MIN
+        )
+    return flock, None
+
+
 def main() -> None:
     pygame.init()
     screen = pygame.display.set_mode((WIDTH, HEIGHT))
@@ -57,7 +123,7 @@ def main() -> None:
     font = pygame.font.SysFont("monospace", 14)
 
     settings = FlockSettings()
-    flock = make_flock(NUM_BOIDS)
+    flock = make_flock(NUM_BOIDS, WIDTH, HEIGHT)
     paused = False
 
     running = True
@@ -68,33 +134,26 @@ def main() -> None:
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     running = False
-                elif event.key == pygame.K_p:
-                    paused = not paused
-                elif event.key == pygame.K_r:
-                    flock = make_flock(NUM_BOIDS)
-                elif event.key == pygame.K_SPACE:
-                    mx, my = pygame.mouse.get_pos()
-                    spawn_at(flock, mx, my)
-                elif event.key == pygame.K_UP:
-                    settings.max_speed = min(settings.max_speed + 0.5, 12.0)
-                elif event.key == pygame.K_DOWN:
-                    settings.max_speed = max(settings.max_speed - 0.5, 1.0)
-                elif event.key in (pygame.K_PLUS, pygame.K_EQUALS):
-                    settings.perception_radius = min(settings.perception_radius + 10, 200)
-                elif event.key == pygame.K_MINUS:
-                    settings.perception_radius = max(settings.perception_radius - 10, 20)
+                else:
+                    flock, toggle = handle_keydown(event.key, flock, settings)
+                    if toggle is not None:
+                        paused = not paused
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 2:
                 spawn_at(flock, event.pos[0], event.pos[1])
 
         if not paused:
-            mouse_pos = pygame.mouse.get_pos()
-            mouse_buttons = pygame.mouse.get_pressed()
+            buttons = pygame.mouse.get_pressed()
+            mouse = MouseState(
+                pos=pygame.mouse.get_pos(),
+                attract=buttons[0],
+                repel=buttons[2],
+            )
             for boid in flock:
-                boid.update(flock, WIDTH, HEIGHT, settings, mouse_pos, mouse_buttons)
+                boid.update(flock, WIDTH, HEIGHT, settings, mouse)
 
         screen.fill(BG_COLOR)
         for boid in flock:
-            boid.draw(screen)
+            draw_boid(screen, boid)
         draw_hud(screen, font, clock, flock, settings, paused)
         pygame.display.flip()
         clock.tick(FPS)
