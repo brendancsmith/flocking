@@ -1,3 +1,3 @@
-"""Flocking: A flock of little birds."""
+"""Flocking: a flocking birds simulation."""
 
 __version__ = "0.1.0"

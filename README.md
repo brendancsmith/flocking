@@ -1,6 +1,6 @@
 # Flocking
 
-A flock of little birds. Multi-agent CLI for sports betting analysis powered by the Claude Agent SDK.
+A flocking birds simulation using classic [boids](https://en.wikipedia.org/wiki/Boids) rules.
 
 ## Setup
 
@@ -8,26 +8,20 @@ A flock of little birds. Multi-agent CLI for sports betting analysis powered by 
 uv sync
 ```
 
-Requires the [sports](https://github.com/brendancsmith/sports) CLI to be set up at `~/repos/brendancsmith/sports` with data in `~/.sports/`.
-
 ## Usage
 
 ```bash
-# Ask the flock anything
-flocking ask "What are the best value bets this week?"
-
-# Filter to a specific sport
-flocking ask "Who's going to win tonight?" --sport nba
-
-# Allow more agent turns for complex questions
-flocking ask "Build me a Kelly portfolio across all sports" --max-turns 50
+flocking
 ```
+
+Press **Escape** or close the window to quit.
 
 ## How It Works
 
-Flocking spawns a lead agent that coordinates two specialist birds:
+Each bird follows three simple rules:
 
-- **Lark** (Data Scout) fetches fresh data, standings, schedules, and results
-- **Kite** (Betting Analyst) runs predictions, finds value bets, and builds portfolios
+1. **Separation** — steer away from nearby neighbors to avoid crowding
+2. **Alignment** — match the heading of nearby neighbors
+3. **Cohesion** — steer toward the average position of nearby neighbors
 
-The lead deploys Lark first to gather context, then Kite for analysis, and synthesizes their findings into a concise betting brief.
+These local rules produce emergent flocking behavior with no central coordination.

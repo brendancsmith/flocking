@@ -1,76 +1,106 @@
-"""Flocking CLI: a flock of little birds."""
+"""Flocking simulation entry point."""
 
 from __future__ import annotations
 
-import anyio
-import typer
-from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
-from rich.console import Console
+import random
 
-from flocking.birds import FLOCK, SPORTS_CLI_DIR
+import pygame
 
-app = typer.Typer(
-    name="flocking",
-    help="A flock of little birds.",
-    no_args_is_help=True,
-)
-console = Console()
+from flocking.birds import Boid, FlockSettings
 
-SYSTEM_PROMPT = """\
-You are the lead of a small flock of analyst birds.
-
-You have two specialist subagents:
-- **lark** (Data Scout): Fetches fresh data, checks standings, schedules, and recent results.
-- **kite** (Betting Analyst): Runs predictions, finds value bets, builds portfolios, \
-and analyzes model performance.
-
-Workflow:
-1. For any question, first deploy **lark** to ensure data is fresh and gather context \
-(standings, schedules, recent results).
-2. Then deploy **kite** for analysis (predictions, value bets, portfolio optimization).
-3. Synthesize their findings into a clear, actionable betting brief.
-
-When deploying a bird, use the Task tool to spawn it as a subagent. Be specific about \
-what you need from each bird.
-
-Output format:
-- Lead with the key takeaway or recommendation
-- Include specific numbers: probabilities, edges, bet sizes, records
-- Note any caveats: stale data, model limitations, small sample sizes
-- Keep it concise — this is a betting brief, not a research paper
-"""
+WIDTH = 1024
+HEIGHT = 768
+NUM_BOIDS = 100
+FPS = 60
+BG_COLOR = (15, 15, 25)
+HUD_COLOR = (180, 180, 180)
+SPAWN_BURST = 10
 
 
-async def _run(prompt: str, max_turns: int, sport: str | None) -> None:
-    full_prompt = prompt
-    if sport:
-        full_prompt = f"[Sport filter: {sport}] {prompt}"
-
-    async for message in query(
-        prompt=full_prompt,
-        options=ClaudeAgentOptions(
-            cwd=SPORTS_CLI_DIR,
-            system_prompt=SYSTEM_PROMPT,
-            allowed_tools=["Bash", "Read", "Glob", "Grep", "Task"],
-            permission_mode="bypassPermissions",
-            allow_dangerously_skip_permissions=True,
-            max_turns=max_turns,
-            agents=FLOCK,
-        ),
-    ):
-        if isinstance(message, ResultMessage):
-            console.print(message.result)
+def make_flock(n: int) -> list[Boid]:
+    return [Boid(x=random.uniform(0, WIDTH), y=random.uniform(0, HEIGHT)) for _ in range(n)]
 
 
-@app.command()
-def ask(
-    prompt: str = typer.Argument(help="Question for the flock"),
-    max_turns: int = typer.Option(30, "--max-turns", "-t", help="Maximum agent turns"),
-    sport: str | None = typer.Option(None, "--sport", "-s", help="Filter to a specific sport"),
+def spawn_at(flock: list[Boid], x: float, y: float, count: int = SPAWN_BURST) -> None:
+    for _ in range(count):
+        flock.append(Boid(x=x + random.uniform(-20, 20), y=y + random.uniform(-20, 20)))
+
+
+def draw_hud(
+    surface: pygame.Surface,
+    font: pygame.font.Font,
+    clock: pygame.time.Clock,
+    flock: list[Boid],
+    settings: FlockSettings,
+    paused: bool,
 ) -> None:
-    """Ask the flock a question."""
-    anyio.run(lambda: _run(prompt, max_turns, sport))
+    lines = [
+        f"Boids: {len(flock)}   FPS: {clock.get_fps():.0f}",
+        f"Speed: {settings.max_speed:.1f}   Perception: {settings.perception_radius:.0f}",
+        f"Sep: {settings.separation_weight:.1f}  Ali: {settings.alignment_weight:.1f}"
+        f"  Coh: {settings.cohesion_weight:.1f}",
+    ]
+    if paused:
+        lines.insert(0, "PAUSED")
+    y = 10
+    for line in lines:
+        img = font.render(line, True, HUD_COLOR)
+        surface.blit(img, (10, y))
+        y += img.get_height() + 2
+
+
+def main() -> None:
+    pygame.init()
+    screen = pygame.display.set_mode((WIDTH, HEIGHT))
+    pygame.display.set_caption("Flocking")
+    clock = pygame.time.Clock()
+    font = pygame.font.SysFont("monospace", 14)
+
+    settings = FlockSettings()
+    flock = make_flock(NUM_BOIDS)
+    paused = False
+
+    running = True
+    while running:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    running = False
+                elif event.key == pygame.K_p:
+                    paused = not paused
+                elif event.key == pygame.K_r:
+                    flock = make_flock(NUM_BOIDS)
+                elif event.key == pygame.K_SPACE:
+                    mx, my = pygame.mouse.get_pos()
+                    spawn_at(flock, mx, my)
+                elif event.key == pygame.K_UP:
+                    settings.max_speed = min(settings.max_speed + 0.5, 12.0)
+                elif event.key == pygame.K_DOWN:
+                    settings.max_speed = max(settings.max_speed - 0.5, 1.0)
+                elif event.key in (pygame.K_PLUS, pygame.K_EQUALS):
+                    settings.perception_radius = min(settings.perception_radius + 10, 200)
+                elif event.key == pygame.K_MINUS:
+                    settings.perception_radius = max(settings.perception_radius - 10, 20)
+            elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 2:
+                spawn_at(flock, event.pos[0], event.pos[1])
+
+        if not paused:
+            mouse_pos = pygame.mouse.get_pos()
+            mouse_buttons = pygame.mouse.get_pressed()
+            for boid in flock:
+                boid.update(flock, WIDTH, HEIGHT, settings, mouse_pos, mouse_buttons)
+
+        screen.fill(BG_COLOR)
+        for boid in flock:
+            boid.draw(screen)
+        draw_hud(screen, font, clock, flock, settings, paused)
+        pygame.display.flip()
+        clock.tick(FPS)
+
+    pygame.quit()
 
 
 if __name__ == "__main__":
-    app()
+    main()

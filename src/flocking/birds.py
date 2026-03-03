@@ -1,67 +1,134 @@
-"""Bird agent definitions for the flocking flock."""
+"""Boid (bird) agent for the flocking simulation."""
 
 from __future__ import annotations
 
-from claude_agent_sdk import AgentDefinition
+import math
+import random
+from dataclasses import dataclass, field
 
-SPORTS_CLI_DIR = "/Users/brendan/repos/brendancsmith/sports"
-DATA_DIR = "~/.sports"
+import pygame
 
-LARK = AgentDefinition(
-    description="Data scout bird that fetches fresh sports data, checks standings, "
-    "schedules, and recent results.",
-    prompt=(
-        "You are Lark, a data scout bird. Your job is to fetch fresh sports data "
-        "and report on the current state of things: standings, schedules, recent results, "
-        "and team rosters.\n\n"
-        "You have access to the `sports` CLI. Key commands:\n"
-        "  sports fetch {sport} --season {year}   # fetch/update data from ESPN\n"
-        "  sports fetch {sport1},{sport2}          # fetch multiple sports\n"
-        "  sports standings {sport}                # show current standings\n"
-        "  sports teams {sport}                    # list teams and abbreviations\n\n"
-        f"Working directory for the sports CLI: {SPORTS_CLI_DIR}\n"
-        f"Data lives in {DATA_DIR}/ (SQLite DB at {DATA_DIR}/sports.db, "
-        f"Parquet cache at {DATA_DIR}/cache/)\n\n"
-        "Always run commands with `uv run` from the sports CLI directory, e.g.:\n"
-        f"  cd {SPORTS_CLI_DIR} && uv run sports standings nfl\n\n"
-        "When asked to ensure data is fresh, check if a fetch is needed by looking at "
-        "file modification times in the cache directory, then fetch if stale.\n\n"
-        "Supported sports: nfl, cfb, nba, mlb, nhl, mls, wnba, mbb, wbb, epl, "
-        "olympics_fifa, olympics_basketball, olympics_hockey\n\n"
-        "Report findings concisely. Include relevant numbers, records, and dates."
-    ),
-    tools=["Bash", "Read", "Glob", "Grep"],
-)
 
-KITE = AgentDefinition(
-    description="Betting analyst bird that runs predictions, finds value bets, "
-    "builds portfolios, and analyzes model performance.",
-    prompt=(
-        "You are Kite, a sharp-eyed betting analyst bird. Your job is to run predictions, "
-        "find value bets, build optimal portfolios, and analyze model performance.\n\n"
-        "You have access to the `sports` CLI. Key commands:\n"
-        "  sports predict {sport} {AWAY}@{HOME}   # predict a game outcome\n"
-        "  sports bets value                       # find value bets across all sports\n"
-        "  sports bets value --sport {sport}       # value bets for one sport\n"
-        "  sports bets portfolio                   # build optimal Kelly portfolio\n"
-        "  sports train {sport}                    # train models for a sport\n"
-        "  sports backtest {sport} --season {year} # walk-forward backtest\n"
-        "  sports hpo {sport} -n {trials}          # hyperparameter tuning\n"
-        "  sports analyze seasons {sport}          # analyze optimal training seasons\n\n"
-        f"Working directory for the sports CLI: {SPORTS_CLI_DIR}\n"
-        f"Models are saved in {DATA_DIR}/models/{{sport}}/\n\n"
-        "Always run commands with `uv run` from the sports CLI directory, e.g.:\n"
-        f"  cd {SPORTS_CLI_DIR} && uv run sports predict nfl KC@BUF\n\n"
-        "When reporting predictions and bets:\n"
-        "- Include the predicted probability and any edge over the market\n"
-        "- Report Kelly-optimal bet sizes when available\n"
-        "- Note confidence levels and model accuracy metrics\n"
-        "- Flag any stale models that may need retraining"
-    ),
-    tools=["Bash", "Read", "Glob"],
-)
+@dataclass
+class FlockSettings:
+    """Mutable runtime-tunable simulation parameters."""
 
-FLOCK: dict[str, AgentDefinition] = {
-    "lark": LARK,
-    "kite": KITE,
-}
+    separation_weight: float = 1.5
+    alignment_weight: float = 1.0
+    cohesion_weight: float = 1.0
+    perception_radius: float = 80.0
+    separation_radius: float = 30.0
+    max_speed: float = 4.0
+    max_force: float = 0.15
+    margin: int = 50
+    turn_factor: float = 0.3
+    mouse_force: float = 0.4
+
+
+@dataclass
+class Boid:
+    """A single bird in the flock."""
+
+    x: float
+    y: float
+    vx: float = field(default_factory=lambda: random.uniform(-2, 2))
+    vy: float = field(default_factory=lambda: random.uniform(-2, 2))
+
+    def update(
+        self,
+        flock: list[Boid],
+        width: int,
+        height: int,
+        settings: FlockSettings,
+        mouse_pos: tuple[int, int] | None = None,
+        mouse_buttons: tuple[bool, bool, bool] = (False, False, False),
+    ) -> None:
+        ax, ay = 0.0, 0.0
+
+        sep_x, sep_y, sep_count = 0.0, 0.0, 0
+        ali_x, ali_y, ali_count = 0.0, 0.0, 0
+        coh_x, coh_y, coh_count = 0.0, 0.0, 0
+
+        for other in flock:
+            if other is self:
+                continue
+            dx = other.x - self.x
+            dy = other.y - self.y
+            dist = (dx * dx + dy * dy) ** 0.5
+            if dist < settings.perception_radius:
+                ali_x += other.vx
+                ali_y += other.vy
+                ali_count += 1
+                coh_x += other.x
+                coh_y += other.y
+                coh_count += 1
+                if dist < settings.separation_radius and dist > 0:
+                    sep_x -= dx / dist
+                    sep_y -= dy / dist
+                    sep_count += 1
+
+        if sep_count > 0:
+            ax += sep_x / sep_count * settings.separation_weight
+            ay += sep_y / sep_count * settings.separation_weight
+        if ali_count > 0:
+            ax += (ali_x / ali_count - self.vx) * settings.alignment_weight * 0.05
+            ay += (ali_y / ali_count - self.vy) * settings.alignment_weight * 0.05
+        if coh_count > 0:
+            ax += (coh_x / coh_count - self.x) * settings.cohesion_weight * 0.001
+            ay += (coh_y / coh_count - self.y) * settings.cohesion_weight * 0.001
+
+        # Mouse attraction (left-click) / repulsion (right-click)
+        if mouse_pos is not None and (mouse_buttons[0] or mouse_buttons[2]):
+            mdx = mouse_pos[0] - self.x
+            mdy = mouse_pos[1] - self.y
+            mdist = (mdx * mdx + mdy * mdy) ** 0.5
+            if mdist > 0:
+                direction = 1.0 if mouse_buttons[0] else -1.0
+                strength = settings.mouse_force / max(mdist * 0.02, 0.5)
+                ax += direction * mdx / mdist * strength
+                ay += direction * mdy / mdist * strength
+
+        # Steer away from edges
+        if self.x < settings.margin:
+            ax += settings.turn_factor
+        elif self.x > width - settings.margin:
+            ax -= settings.turn_factor
+        if self.y < settings.margin:
+            ay += settings.turn_factor
+        elif self.y > height - settings.margin:
+            ay -= settings.turn_factor
+
+        # Clamp acceleration
+        force = (ax * ax + ay * ay) ** 0.5
+        if force > settings.max_force:
+            ax = ax / force * settings.max_force
+            ay = ay / force * settings.max_force
+
+        self.vx += ax
+        self.vy += ay
+
+        # Clamp speed
+        speed = (self.vx * self.vx + self.vy * self.vy) ** 0.5
+        if speed > settings.max_speed:
+            self.vx = self.vx / speed * settings.max_speed
+            self.vy = self.vy / speed * settings.max_speed
+
+        self.x += self.vx
+        self.y += self.vy
+
+    def draw(self, surface: pygame.Surface) -> None:
+        """Draw the boid as a small triangle pointing in its direction of travel."""
+        angle = math.atan2(self.vy, self.vx)
+        size = 6
+        points = [
+            (self.x + math.cos(angle) * size * 2, self.y + math.sin(angle) * size * 2),
+            (
+                self.x + math.cos(angle + 2.5) * size,
+                self.y + math.sin(angle + 2.5) * size,
+            ),
+            (
+                self.x + math.cos(angle - 2.5) * size,
+                self.y + math.sin(angle - 2.5) * size,
+            ),
+        ]
+        pygame.draw.polygon(surface, (220, 220, 220), points)
