@@ -5,6 +5,12 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, field
 
+__all__ = ["Boid", "Bounds", "FlockSettings", "MouseState"]
+
+Bounds = tuple[int, int]
+
+INITIAL_SPEED_RANGE = 2.0
+
 
 @dataclass
 class FlockSettings:
@@ -41,14 +47,17 @@ class Boid:
 
     x: float
     y: float
-    vx: float = field(default_factory=lambda: random.uniform(-2, 2))
-    vy: float = field(default_factory=lambda: random.uniform(-2, 2))
+    vx: float = field(
+        default_factory=lambda: random.uniform(-INITIAL_SPEED_RANGE, INITIAL_SPEED_RANGE)
+    )
+    vy: float = field(
+        default_factory=lambda: random.uniform(-INITIAL_SPEED_RANGE, INITIAL_SPEED_RANGE)
+    )
 
     def update(
         self,
         flock: list[Boid],
-        width: int,
-        height: int,
+        bounds: Bounds,
         settings: FlockSettings,
         mouse: MouseState | None = None,
     ) -> None:
@@ -56,7 +65,7 @@ class Boid:
         mx, my = self._mouse_steering(settings, mouse)
         ax += mx
         ay += my
-        ex, ey = self._edge_avoidance(width, height, settings)
+        ex, ey = self._edge_avoidance(bounds, settings)
         ax += ex
         ay += ey
 
@@ -72,8 +81,9 @@ class Boid:
         """Compute combined separation, alignment, and cohesion in a single neighbor pass."""
         ax, ay = 0.0, 0.0
         sep_x, sep_y, sep_count = 0.0, 0.0, 0
-        ali_x, ali_y, ali_count = 0.0, 0.0, 0
-        coh_x, coh_y, coh_count = 0.0, 0.0, 0
+        ali_x, ali_y = 0.0, 0.0
+        coh_x, coh_y = 0.0, 0.0
+        neighbor_count = 0
 
         for other in flock:
             if other is self:
@@ -82,28 +92,27 @@ class Boid:
             dy = other.y - self.y
             dist = (dx * dx + dy * dy) ** 0.5
             if dist < settings.perception_radius:
+                neighbor_count += 1
                 ali_x += other.vx
                 ali_y += other.vy
-                ali_count += 1
                 coh_x += other.x
                 coh_y += other.y
-                coh_count += 1
                 if dist < settings.separation_radius and dist > 0:
                     sep_x -= dx / dist
                     sep_y -= dy / dist
                     sep_count += 1
 
+        # Apply accumulated forces
         if sep_count > 0:
             ax += sep_x / sep_count * settings.separation_weight
             ay += sep_y / sep_count * settings.separation_weight
-        if ali_count > 0:
-            steer_x = (ali_x / ali_count - self.vx) * settings.alignment_damping
-            steer_y = (ali_y / ali_count - self.vy) * settings.alignment_damping
+        if neighbor_count > 0:
+            steer_x = (ali_x / neighbor_count - self.vx) * settings.alignment_damping
+            steer_y = (ali_y / neighbor_count - self.vy) * settings.alignment_damping
             ax += steer_x * settings.alignment_weight
             ay += steer_y * settings.alignment_weight
-        if coh_count > 0:
-            steer_x = (coh_x / coh_count - self.x) * settings.cohesion_damping
-            steer_y = (coh_y / coh_count - self.y) * settings.cohesion_damping
+            steer_x = (coh_x / neighbor_count - self.x) * settings.cohesion_damping
+            steer_y = (coh_y / neighbor_count - self.y) * settings.cohesion_damping
             ax += steer_x * settings.cohesion_weight
             ay += steer_y * settings.cohesion_weight
 
@@ -125,9 +134,8 @@ class Boid:
         )
         return direction * mdx / mdist * strength, direction * mdy / mdist * strength
 
-    def _edge_avoidance(
-        self, width: int, height: int, settings: FlockSettings
-    ) -> tuple[float, float]:
+    def _edge_avoidance(self, bounds: Bounds, settings: FlockSettings) -> tuple[float, float]:
+        width, height = bounds
         ax, ay = 0.0, 0.0
         if self.x < settings.margin:
             ax += settings.turn_factor
