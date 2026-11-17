@@ -35,5 +35,5 @@ ignore_missing_imports = true
 
 [dependency-groups]
 dev = [
-    "mypy>=1.19.1",
+    "mypy>=2.4.1",
 ]
